@@ -4,13 +4,14 @@ import threading
 import time
 
 from rotarygpt.audio import PCMUSilenceDetector, linear_to_mu_law_sample
+from rotarygpt.dtmf import DTMFDetector
 from rotarygpt.aws import PollyRequest
 from rotarygpt.openai import WhisperRequest, GPTRequest
 from rotarygpt.utils import clear_queue
 
 
 class Conversation:
-    def __init__(self, audio_chunk_queue_in, audio_chunk_queue_out, function_manager):
+    def __init__(self, audio_chunk_queue_in, audio_chunk_queue_out, function_manager, audio_recorder):
         self.audio_chunk_queue_in = audio_chunk_queue_in
         self.audio_chunk_queue_out = audio_chunk_queue_out
         self.function_manager = function_manager
@@ -18,19 +19,22 @@ class Conversation:
         self.conversation_items = []
         self.current_whisper_request = None
         self.silence_detector = PCMUSilenceDetector()
+        self.dtmf_detector = DTMFDetector()
         self.shutdown_event = None
         self.response_arrived_event = threading.Event()
+        self.audio_recorder = audio_recorder
 
     def start(self, shutdown_event = None):
         logging.info("Conversation started")
         self.shutdown_event = shutdown_event
+        self.audio_recorder.start_recording()
         PollyRequest.voice = PollyRequest.default_voice
 
         try:
             self._greet()
 
             while not self.shutdown_event.is_set():
-                self._start_whisper_request()
+                # self._start_whisper_request()
                 self._receive_audio()
                 if self.shutdown_event.is_set():
                     break
@@ -38,7 +42,7 @@ class Conversation:
                 logging.debug("Silence detected")
 
                 self._start_wait_speaker()
-                self._finish_current_whisper_request()
+                # self._finish_current_whisper_request()
 
                 agent_text = None
                 while agent_text is None and not self.shutdown_event.is_set():
@@ -60,6 +64,7 @@ class Conversation:
                 logging.debug("Audio out queue empty")
 
                 clear_queue(self.audio_chunk_queue_in)
+                self.dtmf_detector.reset_had_signal()
                 self.silence_detector.reset_had_signal()
 
         except:
@@ -68,6 +73,7 @@ class Conversation:
         finally:
             self.response_arrived_event.set()
             self._discard_current_whisper_request()
+            self.audio_recorder.stop_recording()
             logging.info("Conversation ended")
 
     def on_polly_chunk(self, chunk):
@@ -86,36 +92,38 @@ class Conversation:
         logging.debug("Receiving audio")
         while not self.shutdown_event.is_set():
             chunk = self.audio_chunk_queue_in.get()
+            # dtmf = self.dtmf_detector.add_sample_and_detect_dtmf()
+            self.audio_recorder.write_audio(chunk)
 
-            if self.current_whisper_request is not None and self.audio_chunk_queue_out.empty():
-                self.current_whisper_request.add_audio_chunk(chunk)
-                if self.silence_detector.add_sample_and_detect_silence(chunk):
-                    break
+            # if self.current_whisper_request is not None and self.audio_chunk_queue_out.empty():
+            #     self.current_whisper_request.add_audio_chunk(chunk)
+            #     if self.silence_detector.add_sample_and_detect_silence(chunk):
+            #         break
 
     def _finish_current_whisper_request(self):
         logging.debug("Sending Whisper request")
-        self.current_whisper_request.finish_request()
-        text = self.current_whisper_request.get_response()
+        # self.current_whisper_request.finish_request()
+        # text = self.current_whisper_request.get_response()
 
-        logging.debug("Whisper returned")
+        # logging.debug("Whisper returned")
 
-        self.current_whisper_request = None
-        if text is not None and text != "":
-            self.conversation_items.append(
-                {"role": "user", "content": text}
-            )
-            logging.info("User message: \x1b[31;1m" + text + "\x1b[0m")
+        # self.current_whisper_request = None
+        # if text is not None and text != "":
+        #     self.conversation_items.append(
+        #         {"role": "user", "content": text}
+        #     )
+        #     logging.info("User message: \x1b[31;1m" + text + "\x1b[0m")
 
     def _discard_current_whisper_request(self):
-        if self.current_whisper_request is None:
-            return
+        # if self.current_whisper_request is None:
+        #     return
         logging.debug("Discarding Whisper request")
-        self.current_whisper_request.discard_request()
+        # self.current_whisper_request.discard_request()
 
     def _start_whisper_request(self):
         logging.debug("Starting Whisper request")
-        self.current_whisper_request = WhisperRequest(self.shutdown_event)
-        self.current_whisper_request.start_request()
+        # self.current_whisper_request = WhisperRequest(self.shutdown_event)
+        # self.current_whisper_request.start_request()
 
     def _send_gpt_request(self):
         logging.debug("Sending GPT request")

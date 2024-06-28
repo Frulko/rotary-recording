@@ -90,6 +90,8 @@ class SIPServer:
         return None
 
     def _handle_request(self, request):
+
+
         if request.method == b'INVITE':
             if self.in_call:
                 return
